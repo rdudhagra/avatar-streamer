@@ -1,0 +1,26 @@
+# Avatar Streamer Global Parameters
+
+# Network settings
+network:
+  robot_ip: "127.0.0.1"  # Robot runs locally, not in Docker
+  operator_ip: "127.0.0.1"  # Docker containers connect to host machine
+  recorder_ip: "recorder"  # Docker service name for the recorder
+  
+  # Ports
+  video_port: 31577
+  audio_port: 31578
+  control_port: 31579
+  
+# Video settings
+video:
+  width: 1280
+  height: 720
+  framerate: 30
+  encoding: "h264"
+  bitrate: 2000000  # 2 Mbps
+  
+# Audio settings
+audio:
+  channels: 2
+  rate: 44100
+  encoding: "opus" 
