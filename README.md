@@ -4,15 +4,13 @@ A system for streaming webcam video from a robot to an operator and a recorder.
 
 ## Architecture
 
-- **Robot**: Runs locally (not in Docker) and uses ffmpeg to stream the webcam
-- **Operator**: Runs locally (not in Docker) and uses ffplay to view the stream
-- **Recorder**: Runs in Docker and can record the stream (to be implemented)
+- **Robot**: Runs locally and uses ffmpeg to stream the webcam
+- **Operator**: Runs locally and uses ffplay to view the stream
 
 ## Requirements
 
 ### Host machine
 - ffmpeg and ffplay installed (for streaming and viewing)
-- Docker and Docker Compose installed (for recorder)
 
 ## Getting Started
 
@@ -29,12 +27,6 @@ A system for streaming webcam video from a robot to an operator and a recorder.
    ./run.sh
    ```
    This will start ffplay to receive and display the video stream.
-
-3. **[Optional] Start the recorder** (in a third terminal):
-   ```
-   docker compose up --build recorder
-   ```
-   This will build and start just the recorder container.
 
 ## Configuration
 
