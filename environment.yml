@@ -1,0 +1,15 @@
+name: avatar-streamer
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.9
+  - pyyaml
+  - ffmpeg
+  - opencv
+  - pip
+  - numpy
+  - matplotlib
+  - pip:
+    - opencv-python
+    - python-dateutil 

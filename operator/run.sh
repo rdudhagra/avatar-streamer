@@ -1,14 +1,21 @@
 #!/bin/bash
 
-# Source parameters from the YAML file
-VIDEO_PORT=$(grep "video_port:" ../params.yaml | awk '{print $2}')
+# Get the directory of this script
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 
-echo "Starting ffplay to receive stream on port ${VIDEO_PORT}"
+# Check if conda is installed and in PATH
+if ! command -v conda &> /dev/null; then
+    echo "Error: conda is not installed or not in PATH"
+    exit 1
+fi
 
-# Run ffplay with low-latency options
-ffplay -i udp://@0.0.0.0:${VIDEO_PORT} \
-  -max_delay 0 \
-  -max_probe_packets 1 \
-  -analyzeduration 0 \
-  -flags +low_delay \
-  -fflags +nobuffer 
+# Check if the environment exists
+if ! conda env list | grep -q "avatar-streamer"; then
+    echo "Creating conda environment 'avatar-streamer'..."
+    conda env create -f "$ROOT_DIR/environment.yml"
+fi
+
+# Activate the conda environment and run the Python script
+echo "Starting operator viewer..."
+conda run -n avatar-streamer python "$SCRIPT_DIR/view.py" --config "$ROOT_DIR/params.yaml" 
