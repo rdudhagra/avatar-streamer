@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 import time
 import threading
+import hashlib
 
 class VideoStreamer:
     """Captures frames with OpenCV and streams them over the network."""
@@ -101,29 +102,28 @@ class VideoStreamer:
     
     def process_frame(self, frame):
         """Process frame before sending it (can be extended)."""
-        # Add a timestamp overlay for demonstration
-        timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-        cv2.putText(
-            frame,
-            timestamp,
-            (10, 30),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            1,
-            (0, 255, 0),
-            2
-        )
+
+        # Add a fingerprint to the frame to identify later for latency measurement
+        # This fingerprint is simply a global counter that keeps increasing for each frame, looping
+        # every 32 frames.
+        self.frame_count = (self.frame_count + 1) % 32
         
-        # You can add more processing here:
-        # - Filtering
-        # - Object detection
-        # - Augmented reality overlays
-        # - etc.
-        
+        # Add the fingerprint to the frame as a binary code of either white or black squares.
+        # The code is five squares long, and 32x32 pixels.
+        frame[0:32, 0:32, :] = (self.frame_count >> 0 & 1) * 255
+        frame[0:32, 32:64, :] = (self.frame_count >> 1 & 1) * 255
+        frame[32:64, 0:32, :] = (self.frame_count >> 2 & 1) * 255
+        frame[32:64, 32:64, :] = (self.frame_count >> 3 & 1) * 255
+        frame[64:96, 0:32, :] = (self.frame_count >> 4 & 1) * 255
+
+        print(f"Frame count: {self.frame_count}")
+
+        current_time = time.time()
+
         return frame
     
     def calculate_fps(self):
         """Calculate and print the current FPS."""
-        self.frame_count += 1
         current_time = time.time()
         elapsed = current_time - self.start_time
         

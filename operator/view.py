@@ -10,6 +10,7 @@ import time
 from threading import Thread
 import queue
 import signal
+import hashlib
 
 class LatencyCalculator:
     """Class to track video stream latency."""
@@ -103,6 +104,9 @@ class VideoStreamReceiver:
 
                     # Copy to make writable
                     frame = np.array(frame)
+
+                    # Process frame
+                    frame = self.process_frame(frame)
                     
                     # Put in queue if not full
                     if not self.frame_queue.full():
@@ -114,6 +118,21 @@ class VideoStreamReceiver:
                 print(f"Error reading frame: {e}")
                 time.sleep(0.1)
         
+    def process_frame(self, frame):
+        """Process frame before displaying it."""
+
+        # Calculate the counter of the frame from the fingerprint
+        decoded_counter = 0
+        decoded_counter |= (1 << 0) if int(np.average(frame[0:32, 0:32, :])) > 128 else 0
+        decoded_counter |= (1 << 1) if int(np.average(frame[0:32, 32:64, :])) > 128 else 0
+        decoded_counter |= (1 << 2) if int(np.average(frame[32:64, 0:32, :])) > 128 else 0
+        decoded_counter |= (1 << 3) if int(np.average(frame[32:64, 32:64, :])) > 128 else 0
+        decoded_counter |= (1 << 4) if int(np.average(frame[64:96, 0:32, :])) > 128 else 0
+
+        print(f"Decoded counter: {decoded_counter}")
+        
+        return frame
+    
     def _display_loop(self):
         """Display frames with FPS counter."""
         last_time = time.time()

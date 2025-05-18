@@ -18,4 +18,4 @@ fi
 
 # Activate the conda environment and run the Python script
 echo "Starting operator viewer..."
-conda run -n avatar-streamer python "$SCRIPT_DIR/view.py" --config "$ROOT_DIR/params.yaml" 
+conda run -n avatar-streamer --no-capture-output python "$SCRIPT_DIR/view.py" --config "$ROOT_DIR/params.yaml" 
