@@ -4,9 +4,9 @@ A system for streaming webcam video from a robot to an operator and a recorder.
 
 ## Architecture
 
-- **Robot**: Runs locally and uses Python + ffmpeg to stream the webcam
-- **Operator**: Runs locally and uses Python + OpenCV to view the stream and measure latency
-- **Recorder**: Runs in Docker and can record the stream (to be implemented)
+- **Robot**: Streams webcam
+- **Operator**: Receives webcam, shows latency information
+- **Recorder**: Receives stream from operator, saves to file
 
 ## Features
 
@@ -56,6 +56,17 @@ The required packages will be automatically installed in a conda environment:
    - Run the Python script that displays the video stream using OpenCV
    - Calculate and display the real-time latency of the video feed
    - Press 'q' to quit the viewer
+
+4. **Start the recorder viewer** (in another terminal):
+   ```
+   cd recorder
+   ./run.sh
+   ```
+   This will:
+   - Use the same conda environment
+   - Run the Python script that displays the video stream using OpenCV
+   - Save the video feed to disk in the `recordings` folder
+
 
 ## Latency Measurement
 

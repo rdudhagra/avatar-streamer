@@ -10,6 +10,8 @@ import numpy as np
 import time
 import threading
 import hashlib
+import zmq
+import json
 
 class VideoStreamer:
     """Captures frames with OpenCV and streams them over the network."""
@@ -30,6 +32,14 @@ class VideoStreamer:
         # Create pipe for passing frames to ffmpeg
         self.ffmpeg_cmd = None
         self.ffmpeg_process = None
+        
+        # Initialize ZeroMQ context and publisher socket
+        self.zmq_context = zmq.Context()
+        self.zmq_socket = self.zmq_context.socket(zmq.PUB)
+        # Using a different port for ZMQ (video_port + 1)
+        self.zmq_port = self.video_port + 1
+        self.zmq_socket.bind(f"tcp://*:{self.zmq_port}")
+        print(f"ZeroMQ publisher bound to port {self.zmq_port}")
         
     def setup_camera(self):
         """Set up the camera capture based on platform."""
@@ -116,10 +126,17 @@ class VideoStreamer:
         frame[32:64, 32:64, :] = (self.frame_count >> 3 & 1) * 255
         frame[64:96, 0:32, :] = (self.frame_count >> 4 & 1) * 255
 
-        print(f"Frame count: {self.frame_count}")
-
+        # Get current timestamp with millisecond precision
         current_time = time.time()
-
+        
+        # Send frame count and timestamp over ZeroMQ
+        message = {
+            "frame_count": self.frame_count,
+            "timestamp": current_time,
+            "frame_id": int(time.time() * 1000)  # Unique ID for this frame
+        }
+        self.zmq_socket.send_string(json.dumps(message))
+        
         return frame
     
     def calculate_fps(self):
@@ -182,6 +199,12 @@ class VideoStreamer:
         """Stop capturing and streaming."""
         self.running = False
         
+        # Close ZeroMQ socket
+        if hasattr(self, 'zmq_socket'):
+            self.zmq_socket.close()
+        if hasattr(self, 'zmq_context'):
+            self.zmq_context.term()
+        
         # Release camera
         if hasattr(self, 'cap') and self.cap.isOpened():
             self.cap.release()
@@ -198,17 +221,9 @@ class VideoStreamer:
         print("Capture and stream stopped")
 
 def load_config(config_path):
-    """Load parameters from YAML file."""
-    try:
-        with open(config_path, 'r') as f:
-            config = yaml.safe_load(f)
-        return config
-    except FileNotFoundError:
-        print(f"Error: Configuration file {config_path} not found.")
-        sys.exit(1)
-    except yaml.YAMLError as e:
-        print(f"Error parsing YAML file: {e}")
-        sys.exit(1)
+    """Load configuration from YAML file."""
+    with open(config_path, 'r') as file:
+        return yaml.safe_load(file)
 
 def main():
     parser = argparse.ArgumentParser(description='Stream webcam video using OpenCV and ffmpeg')
@@ -223,6 +238,7 @@ def main():
     print(f"Resolution: {config['video']['width']}x{config['video']['height']}")
     print(f"Framerate: {config['video']['framerate']}")
     print(f"Streaming to: {config['network']['operator_ip']}:{config['network']['video_port']}")
+    print(f"ZeroMQ metrics on port: {config['network']['video_port'] + 1}")
     
     # Create and start streamer
     streamer = VideoStreamer(config)
