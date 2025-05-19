@@ -32,7 +32,7 @@ The required packages will be automatically installed in a conda environment:
 
 1. **Clone the repository**:
    ```
-   git clone <repository-url>
+   git clone https://github.com/rdudhagra/avatar-streamer
    cd avatar-streamer
    ```
 
@@ -57,7 +57,7 @@ The required packages will be automatically installed in a conda environment:
    - Calculate and display the real-time latency of the video feed
    - Press 'q' to quit the viewer
 
-4. **Start the recorder viewer** (in another terminal):
+4. **Start the recorder viewer** [BROKEN] (in another terminal):
    ```
    cd recorder
    ./run.sh
@@ -71,16 +71,9 @@ The required packages will be automatically installed in a conda environment:
 ## Latency Measurement
 
 The system provides real-time latency measurements by:
-1. Adding timestamps to frames at the robot side
-2. Reading these timestamps at the operator side
-3. Calculating the time difference to determine end-to-end latency
-4. Displaying this information as an overlay on the video feed
-
-The latency measurement includes:
-- Encoding time
-- Network transmission time
-- Decoding time
-- Display processing time
+1. Tagging each frame sent with a "barcode"
+2. Sending the send timestamp through a separate zeromq socket
+3. Decoding/matching the barcode to send timestamp on the receiver side, calculating frame latency
 
 ## Configuration
 
