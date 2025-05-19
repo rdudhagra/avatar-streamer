@@ -28,18 +28,54 @@ class VideoStreamer:
         self.frame_count = 0
         self.start_time = time.time()
         self.last_fps_print = time.time()
+        self.zmq_messages_sent = 0
+        self.last_zmq_print = time.time()
         
         # Create pipe for passing frames to ffmpeg
         self.ffmpeg_cmd = None
         self.ffmpeg_process = None
         
         # Initialize ZeroMQ context and publisher socket
-        self.zmq_context = zmq.Context()
-        self.zmq_socket = self.zmq_context.socket(zmq.PUB)
-        # Using a different port for ZMQ (video_port + 1)
-        self.zmq_port = self.video_port + 1
-        self.zmq_socket.bind(f"tcp://*:{self.zmq_port}")
-        print(f"ZeroMQ publisher bound to port {self.zmq_port}")
+        try:
+            self.zmq_context = zmq.Context()
+            self.zmq_socket = self.zmq_context.socket(zmq.PUB)
+            # Using a different port for ZMQ (video_port + 1)
+            self.zmq_port = self.video_port + 1
+            
+            # Use TCP wildcard address to bind to all interfaces
+            bind_address = f"tcp://*:{self.zmq_port}"
+            print(f"Attempting to bind ZeroMQ publisher to {bind_address}")
+            self.zmq_socket.bind(bind_address)
+            
+            # Set a high water mark for buffering (optional)
+            self.zmq_socket.setsockopt(zmq.SNDHWM, 1000)
+            
+            # Set linger period to 0 means to discard unsent messages on close
+            self.zmq_socket.setsockopt(zmq.LINGER, 0)
+            
+            print(f"ZeroMQ publisher successfully bound to port {self.zmq_port}")
+            print(f"Local IP addresses for connection:")
+            self._print_local_ips()
+        except Exception as e:
+            print(f"Error setting up ZeroMQ publisher: {e}")
+            raise
+            
+    def _print_local_ips(self):
+        """Print local IP addresses for easier configuration"""
+        import socket
+        try:
+            # Get all local IP addresses
+            hostname = socket.gethostname()
+            print(f"Hostname: {hostname}")
+            
+            # Get IP addresses
+            addresses = socket.getaddrinfo(hostname, None)
+            for addr in addresses:
+                ip = addr[4][0]
+                if ip != '127.0.0.1' and not ip.startswith('::'):  # Skip localhost and IPv6
+                    print(f"IP address: {ip}")
+        except Exception as e:
+            print(f"Could not determine local IP addresses: {e}")
         
     def setup_camera(self):
         """Set up the camera capture based on platform."""
@@ -130,12 +166,29 @@ class VideoStreamer:
         current_time = time.time()
         
         # Send frame count and timestamp over ZeroMQ
-        message = {
-            "frame_count": self.frame_count,
-            "timestamp": current_time,
-            "frame_id": int(time.time() * 1000)  # Unique ID for this frame
-        }
-        self.zmq_socket.send_string(json.dumps(message))
+        try:
+            message = {
+                "frame_count": self.frame_count,
+                "timestamp": current_time,
+                "frame_id": int(time.time() * 1000)  # Unique ID for this frame
+            }
+            
+            # Send as JSON string
+            json_msg = json.dumps(message)
+            self.zmq_socket.send_string(json_msg)
+            
+            # Count sent messages
+            self.zmq_messages_sent += 1
+            
+            # Print ZMQ stats every 5 seconds
+            if current_time - self.last_zmq_print >= 5.0:
+                rate = self.zmq_messages_sent / (current_time - self.last_zmq_print)
+                print(f"ZMQ: Sent {self.zmq_messages_sent} messages at {rate:.1f} msg/sec")
+                self.zmq_messages_sent = 0
+                self.last_zmq_print = current_time
+                
+        except Exception as e:
+            print(f"Error sending ZMQ message: {e}")
         
         return frame
     
@@ -166,6 +219,7 @@ class VideoStreamer:
             return False
         
         print("Starting capture and stream...")
+        print(f"ZeroMQ metrics on port: {self.zmq_port} (connect to this from viewer)")
         
         try:
             while self.running:
@@ -190,6 +244,8 @@ class VideoStreamer:
             print("\nCapture interrupted by user")
         except Exception as e:
             print(f"Error during capture: {e}")
+            import traceback
+            traceback.print_exc()
         finally:
             self.stop()
             
@@ -201,9 +257,17 @@ class VideoStreamer:
         
         # Close ZeroMQ socket
         if hasattr(self, 'zmq_socket'):
-            self.zmq_socket.close()
+            try:
+                self.zmq_socket.close()
+                print("ZeroMQ socket closed")
+            except Exception as e:
+                print(f"Error closing ZeroMQ socket: {e}")
         if hasattr(self, 'zmq_context'):
-            self.zmq_context.term()
+            try:
+                self.zmq_context.term()
+                print("ZeroMQ context terminated")
+            except Exception as e:
+                print(f"Error terminating ZeroMQ context: {e}")
         
         # Release camera
         if hasattr(self, 'cap') and self.cap.isOpened():
@@ -249,6 +313,8 @@ def main():
         print("\nStream interrupted by user. Stopping...")
     except Exception as e:
         print(f"Error: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
     finally:
         if hasattr(streamer, 'stop'):

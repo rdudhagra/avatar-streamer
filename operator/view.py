@@ -87,21 +87,40 @@ class VideoStreamReceiver:
         self.start_time = time.time()
         self.latency_calc = LatencyCalculator()
         self.frame_queue = queue.Queue(maxsize=10)
+        self.zmq_messages_received = 0
+        self.last_zmq_debug_time = time.time()
         
         # Initialize ZeroMQ context and subscriber socket
-        self.zmq_context = zmq.Context()
-        self.zmq_socket = self.zmq_context.socket(zmq.SUB)
-        # Connect to publisher (video_port + 1)
-        self.zmq_port = self.video_port + 1
-        self.zmq_socket.connect(f"tcp://{config['network']['operator_ip']}:{self.zmq_port}")
-        # Subscribe to all messages
-        self.zmq_socket.setsockopt_string(zmq.SUBSCRIBE, "")
-        print(f"ZeroMQ subscriber connected to {config['network']['operator_ip']}:{self.zmq_port}")
-        
-        # Start ZeroMQ receiver thread
-        self.zmq_thread = Thread(target=self._receive_zmq_messages)
-        self.zmq_thread.daemon = True
-        self.zmq_thread.start()
+        try:
+            print("Setting up ZeroMQ subscriber...")
+            self.zmq_context = zmq.Context()
+            self.zmq_socket = self.zmq_context.socket(zmq.SUB)
+            
+            # Connect to publisher (video_port + 1)
+            self.zmq_port = self.video_port + 1
+            connect_address = f"tcp://{config['network']['operator_ip']}:{self.zmq_port}"
+            print(f"Connecting to ZeroMQ publisher at {connect_address}")
+            
+            # Set socket options for better performance
+            self.zmq_socket.setsockopt(zmq.RCVHWM, 1000)  # High water mark for receiving
+            self.zmq_socket.setsockopt(zmq.LINGER, 0)     # Don't wait on close
+            
+            # Connect to the publisher
+            self.zmq_socket.connect(connect_address)
+            
+            # Subscribe to all messages
+            self.zmq_socket.setsockopt_string(zmq.SUBSCRIBE, "")
+            print(f"ZeroMQ subscriber connected to {config['network']['operator_ip']}:{self.zmq_port}")
+            
+            # Start ZeroMQ receiver thread
+            self.zmq_thread = Thread(target=self._receive_zmq_messages)
+            self.zmq_thread.daemon = True
+            self.zmq_thread.start()
+            
+        except Exception as e:
+            print(f"Error setting up ZeroMQ subscriber: {e}")
+            import traceback
+            traceback.print_exc()
         
     def start(self):
         """Start receiving and displaying the video stream."""
@@ -138,11 +157,23 @@ class VideoStreamReceiver:
     
     def _receive_zmq_messages(self):
         """Receive ZeroMQ messages with frame timestamps."""
+        last_connect_attempt = time.time()
+        reconnect_interval = 5  # seconds
+        
+        print("ZeroMQ receiver thread started")
+        
         while self.running:
             try:
                 # Use poll with timeout to prevent blocking indefinitely
-                if self.zmq_socket.poll(100) & zmq.POLLIN:
+                # NOTE: zmq_socket.poll() returns a bitmask, not something that can be converted to a dict
+                poll_result = self.zmq_socket.poll(100)  # Poll with 100ms timeout
+                
+                if poll_result & zmq.POLLIN:  # Check if POLLIN bit is set
+                    # Receive the message
                     message = self.zmq_socket.recv_string()
+                    self.zmq_messages_received += 1
+                    
+                    # Parse JSON
                     data = json.loads(message)
                     
                     # Store frame timestamp
@@ -150,10 +181,46 @@ class VideoStreamReceiver:
                     timestamp = data.get('timestamp')
                     if frame_count is not None and timestamp is not None:
                         self.latency_calc.store_frame_timestamp(frame_count, timestamp)
-                        print(f"ZMQ: Received timestamp for frame {frame_count}")
+                        
+                        # Print debug info every few seconds
+                        now = time.time()
+                        if now - self.last_zmq_debug_time >= 5:
+                            rate = self.zmq_messages_received / (now - self.last_zmq_debug_time)
+                            print(f"ZMQ: Received {self.zmq_messages_received} messages at {rate:.1f} msg/sec")
+                            print(f"Latest frame count: {frame_count}, timestamp: {timestamp}")
+                            self.zmq_messages_received = 0
+                            self.last_zmq_debug_time = now
+                else:
+                    # No messages received yet, try to reconnect periodically
+                    now = time.time()
+                    if now - last_connect_attempt >= reconnect_interval:
+                        print("No ZeroMQ messages received. Checking connection...")
+                        
+                        # Try to reconnect
+                        try:
+                            # Close and recreate socket
+                            self.zmq_socket.close()
+                            self.zmq_socket = self.zmq_context.socket(zmq.SUB)
+                            connect_address = f"tcp://{self.config['network']['operator_ip']}:{self.zmq_port}"
+                            print(f"Reconnecting to {connect_address}")
+                            self.zmq_socket.connect(connect_address)
+                            self.zmq_socket.setsockopt_string(zmq.SUBSCRIBE, "")
+                        except Exception as e:
+                            print(f"Reconnection attempt failed: {e}")
+                            
+                        last_connect_attempt = now
+                        
+                        # Print current status
+                        print(f"ZeroMQ connection status: waiting for messages")
+                        print(f"Check that publisher is running and the following are correct:")
+                        print(f"  - Operator IP: {self.config['network']['operator_ip']}")
+                        print(f"  - ZeroMQ port: {self.zmq_port}")
+                
             except Exception as e:
                 print(f"Error receiving ZMQ message: {e}")
-                time.sleep(0.1)
+                import traceback
+                traceback.print_exc()
+                time.sleep(1)  # Prevent tight loop in case of persistent error
         
     def _read_frames(self):
         """Read frames from ffmpeg output."""
@@ -198,6 +265,7 @@ class VideoStreamReceiver:
         # Calculate true latency based on ZeroMQ timestamps
         avg_latency, frame_latency = self.latency_calc.calculate_true_latency(decoded_counter)
         
+        
         # Add text with proper None handling
         cv2.putText(frame, f"Decoded counter: {decoded_counter}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
         cv2.putText(frame, f"Frame count: {self.frame_count}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
@@ -211,6 +279,11 @@ class VideoStreamReceiver:
             cv2.putText(frame, f"Avg latency: {avg_latency:.1f} ms", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
         else:
             cv2.putText(frame, "Avg latency: waiting...", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 2)
+            
+        # Add ZMQ status
+        zmq_status = "Connected" if self.zmq_messages_received > 0 else "Waiting for connection..."
+        color = (0, 255, 0) if self.zmq_messages_received > 0 else (0, 165, 255)
+        cv2.putText(frame, f"ZMQ Status: {zmq_status}", (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
         
         return frame
     
@@ -260,7 +333,7 @@ class VideoStreamReceiver:
                         break
                         
                 except queue.Empty:
-                    # If no frames available, just wait
+                    # If no frames available, wait
                     print("No frames available. Waiting for stream...")
                     time.sleep(0.1)
                     continue
@@ -309,7 +382,7 @@ class VideoStreamReceiver:
         
         # Add true latency text (with None check)
         latency_color = (0, 255, 0) if true_latency < 100 else (0, 165, 255) if true_latency < 200 else (0, 0, 255)
-        if true_latency > 0:
+        if true_latency:
             # Only show latency if we have valid data
             cv2.putText(
                 frame, 
@@ -349,9 +422,18 @@ class VideoStreamReceiver:
         
         # Close ZeroMQ socket
         if hasattr(self, 'zmq_socket'):
-            self.zmq_socket.close()
+            try:
+                self.zmq_socket.close()
+                print("ZeroMQ socket closed")
+            except Exception as e:
+                print(f"Error closing ZeroMQ socket: {e}")
+                
         if hasattr(self, 'zmq_context'):
-            self.zmq_context.term()
+            try:
+                self.zmq_context.term()
+                print("ZeroMQ context terminated")
+            except Exception as e:
+                print(f"Error terminating ZeroMQ context: {e}")
         
         if hasattr(self, 'ffmpeg_process'):
             self.ffmpeg_process.terminate()
@@ -380,16 +462,23 @@ def main():
     
     parser = argparse.ArgumentParser(description='Receive and display video stream')
     parser.add_argument('--config', default='../params.yaml', help='Path to config file')
+    parser.add_argument('--ip', help='Override the operator IP address for ZeroMQ connection')
     args = parser.parse_args()
     
     # Load configuration
     config = load_config(args.config)
+    
+    # Override IP if specified
+    if args.ip:
+        print(f"Overriding operator IP with: {args.ip}")
+        config['network']['operator_ip'] = args.ip
     
     # Print view information
     print(f"Starting video viewer with settings:")
     print(f"Resolution: {config['video']['width']}x{config['video']['height']}")
     print(f"Receiving from port: {config['network']['video_port']}")
     print(f"ZeroMQ metrics from port: {config['network']['video_port'] + 1}")
+    print(f"Operator IP: {config['network']['operator_ip']}")
     
     # Create and start receiver
     receiver = VideoStreamReceiver(config)
